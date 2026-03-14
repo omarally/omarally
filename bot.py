@@ -9,7 +9,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIG ---
 # Northflank will provide this via Environment Variables
-BOT_TOKEN = os.getenv('BOT_TOKEN')
+BOT_TOKEN = os.getenv('')
 if not BOT_TOKEN:
     print("❌ Error: BOT_TOKEN environment variable not set!")
     exit(1)
