@@ -56,7 +56,7 @@ def get_student_results(college_id, university_id):
         if name_span:
             full_name = name_span.find_next('span', class_='bottom').text.strip()
             college_name = res_soup.find('span', string="الكلية").find_next('span', class_='bottom').text.strip()
-            final_report = f"👤 **الطالب:** {full_name}\n🏛 **الكلية:** {college_name}\n"
+            final_report = f"👤 الطالب: {full_name}\n🏛 الكلية: {college_name}\n"
             final_report += "—" * 15 + "\n"
         else:
             return "❌ لم يتم العثور على بيانات. تأكد من الرقم الجامعي والكلية."
@@ -68,7 +68,7 @@ def get_student_results(college_id, university_id):
 
         for panel in panels:
             year_title = panel.find('h3', class_='panel-title').get_text(strip=True)
-            final_report += f"\n📌 **{year_title}**\n"
+            final_report += f"\n📌 {year_title}\n"
             
             rows = panel.find_all('tr')[1:]
             for row in rows:
@@ -79,7 +79,7 @@ def get_student_results(college_id, university_id):
                     status = cols[3].get_text(strip=True)
                     
                     icon = "✅" if "ناجح" in status else "❌"
-                    final_report += f"{icon} {subject}: **{grade}**\n"
+                    final_report += f"{icon} {subject}: {grade}\n"
             
         return final_report
 
@@ -89,7 +89,7 @@ def get_student_results(college_id, university_id):
 # --- Bot Handlers ---
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(m):
-    bot.reply_to(m, "أهلاً بك في بوت نتائج جامعة حماة 🎓\n\nأرسل الكلية ثم الرقم الجامعي في سطرين.\nمثال:\nأسنان\n922091981")
+    bot.reply_to(m, "أهلاً بك في بوت نتائج جامعة حماة 🎓\n\nأرسل الكلية ثم الرقم الجامعي في سطرين.\nمثال:\nأسنان\n123456789")
 
 @bot.message_handler(func=lambda m: True)
 def handle_msg(m):
