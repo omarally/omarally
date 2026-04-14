@@ -1,4 +1,7 @@
-pyTelegramBotAPI
+python-telegram-bot
+pymongo
+dnspython
 requests
 beautifulsoup4
+flask
 urllib3
