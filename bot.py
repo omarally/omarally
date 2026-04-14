@@ -1,125 +1,270 @@
 import os
-import telebot
-import requests
-from bs4 import BeautifulSoup
+import threading
 import urllib3
+import requests
+from flask import Flask
+from bs4 import BeautifulSoup
+from pymongo import MongoClient
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# Disable SSL warnings for the university site
+# --- 1. الإعدادات والاتصال ---
+ADMIN_ID = int(os.getenv("ADMINID")) 
+TOKEN = os.getenv('Token')
+MONGO_URI = f"mongodb+srv://{os.getenv('Mongourl')}"
+CHANNEL_ID = -int(os.getenv("ChannelID")) 
+
+client = MongoClient(MONGO_URI)
+db = client['AcademyBotDB']
+
+# مجموعات البيانات
+files_col = db['files_structure']
+quiz_col = db['quiz_structure']
+
+app = Flask(__name__)
+@app.route('/')
+def home(): return "Bot is Active! 🚀"
+
+def get_data(col_type):
+    col = files_col if col_type == 'library' else quiz_col
+    doc = col.find_one({"_id": "tree_data"})
+    return doc.get("content", {}) if doc else {}
+
+def save_data(col_type, data):
+    col = files_col if col_type == 'library' else quiz_col
+    col.update_one({"_id": "tree_data"}, {"$set": {"content": data}}, upsert=True)
+
+# --- 2. جلب العلامات (نظام الجلسة المتقدم) ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# --- CONFIG ---
-# Northflank will provide this via Environment Variables
-BOT_TOKEN = os.getenv('')
-if not BOT_TOKEN:
-    print("❌ Error: BOT_TOKEN environment variable not set!")
-    exit(1)
-
-bot = telebot.TeleBot(BOT_TOKEN)
-
-COLLEGE_MAP = {
-    "أسنان": "3", "طب بشري": "1", "صيدلة": "4", "تمريض": "5",
-    "مدنية": "11", "عمارة": "10", "ميكانيك": "21", "كهرباء": "21",
-    "حاسوب": "18", "اقتصاد": "7", "آداب": "6", "علوم": "13",
-    "تربية": "8", "زراعة": "12", "بيطري": "2"
-}
-
-BASE_URL = 'http://app.hama-univ.edu.sy/StdMark/'
-POST_URL = 'http://app.hama-univ.edu.sy/StdMark/Home/Result'
-
-def get_student_results(college_id, university_id):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    session = requests.Session()
-    session.headers.update(headers)
-    
+def get_pharmacy_marks(std_id):
     try:
-        # Step A: Get Token
-        response = session.get(BASE_URL, verify=False, timeout=30)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        token_tag = soup.find('input', {'name': '__RequestVerificationToken'})
-        
-        if not token_tag:
-            return "❌ تعذر الاتصال بموقع الجامعة (Token Error)."
-            
-        token = token_tag['value']
-        
-        # Step B: Post Data
-        payload = {
-            '__RequestVerificationToken': token,
-            'UniversityId': university_id,
-            'CollegeId': college_id
+        session = requests.Session()
+        base_url = "http://app.hama-univ.edu.sy/StdMark/Home/Result"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Referer': 'http://app.hama-univ.edu.sy/StdMark/',
+            'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8'
         }
-        res_page = session.post(POST_URL, data=payload, verify=False, timeout=30)
-        res_soup = BeautifulSoup(res_page.text, 'html.parser')
+        
+        # محاولة جلب التوكن
+        res_get = session.get(base_url, headers=headers, timeout=20, verify=False)
+        soup_get = BeautifulSoup(res_get.text, 'html.parser')
+        token_input = soup_get.find('input', {'name': '__RequestVerificationToken'})
+        
+        if not token_input:
+            res_get = session.get("http://app.hama-univ.edu.sy/StdMark/", headers=headers, timeout=20, verify=False)
+            soup_get = BeautifulSoup(res_get.text, 'html.parser')
+            token_input = soup_get.find('input', {'name': '__RequestVerificationToken'})
 
-        # 1. Extract Student Info
-        name_span = res_soup.find('span', string="الاسم")
-        if name_span:
-            full_name = name_span.find_next('span', class_='bottom').text.strip()
-            college_name = res_soup.find('span', string="الكلية").find_next('span', class_='bottom').text.strip()
-            final_report = f"👤 الطالب: {full_name}\n🏛 الكلية: {college_name}\n"
-            final_report += "—" * 15 + "\n"
-        else:
-            return "❌ لم يتم العثور على بيانات. تأكد من الرقم الجامعي والكلية."
-
-        # 2. Extract Year Panels
-        panels = res_soup.find_all('div', class_='panel-info')
-        if not panels:
-            return final_report + "\nلا توجد علامات مسجلة حالياً."
-
-        for panel in panels:
-            year_title = panel.find('h3', class_='panel-title').get_text(strip=True)
-            final_report += f"\n📌 {year_title}\n"
+        if not token_input: return "⚠️ عذراً، موقع الجامعة يرفض الجلسة حالياً. حاول لاحقاً."
             
-            rows = panel.find_all('tr')[1:]
-            for row in rows:
+        token = token_input['value']
+        payload = {'__RequestVerificationToken': token, 'UniversityId': std_id, 'CollegeId': "4"}
+        
+        # طلب النتيجة
+        res_post = session.post(base_url, data=payload, headers=headers, timeout=25, verify=False)
+        res_post.encoding = 'utf-8'
+        soup = BeautifulSoup(res_post.text, 'html.parser')
+        
+        if not soup.find('span', class_='bottom'): return '❌ لم يتم العثور على نتائج. تأكد من الرقم الجامعي.'
+            
+        name = soup.find_all('span', class_='bottom')[0].text.strip()
+        output = f"🎓 *الاسم:* *{name}*\n"
+        for panel in soup.find_all('div', class_='panel-info'):
+            header = panel.find('h3')
+            if header: output += f"\n📅 *{header.text.strip()}*:\n"
+            for row in panel.find_all('tr')[1:]:
                 cols = row.find_all('td')
-                if len(cols) >= 4:
-                    subject = cols[0].get_text(strip=True)
-                    grade = cols[2].get_text(strip=True).replace('.00', '')
-                    status = cols[3].get_text(strip=True)
+                if len(cols) >= 3:
+                    # --- Formatting Logic ---
+                    sub_name = cols[0].text.strip()
+                    grade = cols[2].text.strip()
+                    status = cols[3].text.strip()
                     
-                    icon = "✅" if "ناجح" in status else "❌"
-                    final_report += f"{icon} {subject}: {grade}\n"
-            
-        return final_report
+                    emoji = "✅" if "ناجح" in status else "❌" if "راسب" in status else "⛔️"
+                    # Format: {Emoji} {subject name:} {grade}
+                    output += f"{emoji} {sub_name}: {grade}\n"
+        return output
+    except Exception as e: return f"⚠️ خطأ في الاتصال: {str(e)}"
 
-    except Exception as e:
-        return f"⚠️ حدث خطأ أثناء جلب البيانات: {str(e)}"
+# --- 3. الأزرار ---
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup([['📊 بوابة العلامات'], ['📝 الاختبارات (Quiz)'], ['📚 مكتبة الملفات'], ['🤖 المساعد الذكي']], resize_keyboard=True)
 
-# --- Bot Handlers ---
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(m):
-    bot.reply_to(m, "أهلاً بك في بوت نتائج جامعة حماة 🎓\n\nأرسل الكلية ثم الرقم الجامعي في سطرين.\nمثال:\nأسنان\n123456789")
+def nav_btns(): return ["🔙 العودة للخلف", "🏠 القائمة الرئيسية"]
 
-@bot.message_handler(func=lambda m: True)
-def handle_msg(m):
-    lines = m.text.strip().split('\n')
-    if len(lines) < 2:
-        bot.reply_to(m, "⚠️ يرجى إرسال الكلية في السطر الأول والرقم الجامعي في السطر الثاني.")
+# --- 4. منطق الرسائل ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("مرحباً بك في بوت فارما أكاديميا المطور ⚕️", reply_markup=main_menu_keyboard())
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user_id = update.message.from_user.id
+    ud = context.user_data
+    
+    if text == "🏠 القائمة الرئيسية":
+        await start(update, context); return
+
+    if text == "🔙 العودة للخلف":
+        step = ud.get('step')
+        if step == 'year': await start(update, context)
+        elif step == 'sem': 
+            ud['step'] = 'year'
+            btns = [[y] for y in ["السنة الثانية", "السنة الثالثة", "السنة الرابعة", "السنة الخامسة"]] + [nav_btns()]
+            await update.message.reply_text("اختر السنة:", reply_markup=ReplyKeyboardMarkup(btns, resize_keyboard=True))
+        elif step == 'mode':
+            ud['step'] = 'sem'
+            await update.message.reply_text("اختر الفصل:", reply_markup=ReplyKeyboardMarkup([["الفصل الأول"], ["الفصل الثاني"]] + [nav_btns()], resize_keyboard=True))
+        elif step == 'subject':
+            ud['step'] = 'mode'
+            await update.message.reply_text("اختر النوع:", reply_markup=ReplyKeyboardMarkup([["نظري", "عملي"]] + [nav_btns()], resize_keyboard=True))
+        elif step == 'list':
+            ud['step'] = 'subject'
+            data = get_data(ud['type'])
+            subjects = list(data.get(ud['year'], {}).get(ud['sem'], {}).get(ud['mode'], {}).keys())
+            btns = [[s] for s in subjects] + [nav_btns()]
+            await update.message.reply_text("🔙 اختر المادة:", reply_markup=ReplyKeyboardMarkup(btns, resize_keyboard=True))
+        elif step == 'marks': await start(update, context)
         return
-    
-    college_input = lines[0].strip()
-    student_id = lines[1].strip()
-    
-    cid = next((v for k, v in COLLEGE_MAP.items() if k in college_input), None)
-    if not cid:
-        bot.reply_to(m, "❌ الكلية غير مدعومة حالياً. تأكد من كتابة اسم الكلية بشكل صحيح (مثلاً: أسنان، اقتصاد).")
-        return
 
-    # Let user know we are working on it
-    bot.send_chat_action(m.chat.id, 'typing')
-    wait_msg = bot.reply_to(m, "⏳ جاري الاتصال بموقع الجامعة... يرجى الانتظار.")
-    
-    report = get_student_results(cid, student_id)
-    
-    # Clean up the wait message and send results
-    bot.delete_message(m.chat.id, wait_msg.message_id)
-    
-    if len(report) > 4000:
-        for x in range(0, len(report), 4000):
-            bot.send_message(m.chat.id, report[x:x+4000], parse_mode="Markdown")
-    else:
-        bot.send_message(m.chat.id, report, parse_mode="Markdown")
+    # --- إدارة الأدمن ---
+    if user_id == ADMIN_ID:
+        if text.startswith("إضافة مادة:"):
+            if ud.get('step') != 'subject':
+                await update.message.reply_text("⚠️ يجب أن تكون داخل قسم (نظري أو عملي) أولاً.")
+                return
+            sub_name = text.replace("إضافة مادة:", "").strip()
+            data = get_data(ud['type'])
+            y, s, m = ud['year'], ud['sem'], ud['mode']
+            if y not in data: data[y] = {}
+            if s not in data[y]: data[y][s] = {}
+            if m not in data[y][s]: data[y][s][m] = {}
+            data[y][s][m][sub_name] = []
+            save_data(ud['type'], data)
+            await update.message.reply_text(f"✅ تم إضافة مادة: {sub_name}")
+            return
 
-print("Bot is starting...")
-bot.infinity_polling()
+        if text.startswith("حذف مادة:"):
+            if ud.get('step') != 'subject':
+                await update.message.reply_text("⚠️ ادخل إلى قسم (نظري أو عملي) أولاً لتتمكن من حذف مادة منه.")
+                return
+            sub_name = text.replace("حذف مادة:", "").strip()
+            data = get_data(ud['type'])
+            y, s, m = ud['year'], ud['sem'], ud['mode']
+            if sub_name in data.get(y, {}).get(s, {}).get(m, {}):
+                del data[y][s][m][sub_name]
+                save_data(ud['type'], data)
+                await update.message.reply_text(f"✅ تم حذف مادة {sub_name} بنجاح.")
+            else:
+                await update.message.reply_text(f"⚠️ المادة '{sub_name}' غير موجودة.")
+            return
+
+        if text.startswith("إضافة ملف:"):
+            if ud.get('step') != 'list':
+                await update.message.reply_text("⚠️ ادخل إلى المادة المطلوبة أولاً.")
+                return
+            try:
+                parts = text.replace("إضافة ملف:", "").split("|")
+                f_name, ids_part = parts[0].strip(), parts[1].strip().split()
+                ids = [int(ids_part[0])] if len(ids_part) == 1 else list(range(int(ids_part[0]), int(ids_part[1]) + 1))
+                data = get_data(ud['type'])
+                data[ud['year']][ud['sem']][ud['mode']][ud['subject']].append({"name": f_name, "ids": ids})
+                save_data(ud['type'], data)
+                await update.message.reply_text(f"✅ تم إضافة '{f_name}' بنجاح.")
+                return
+            except: await update.message.reply_text("⚠️ التنسيق: إضافة ملف: الاسم | 10 20")
+
+    # --- التنقل ---
+    if text in ['📚 مكتبة الملفات', '📝 الاختبارات (Quiz)']:
+        ud.update({'type': 'library' if 'مكتبة' in text else 'quiz', 'step': 'year'})
+        years = ["السنة الثانية", "السنة الثالثة", "السنة الرابعة", "السنة الخامسة"]
+        await update.message.reply_text("اختر السنة:", reply_markup=ReplyKeyboardMarkup([[y] for y in years] + [nav_btns()], resize_keyboard=True))
+
+    elif ud.get('step') == 'year' and "السنة" in text:
+        ud.update({'step': 'sem', 'year': text})
+        await update.message.reply_text(f"📁 {text}:", reply_markup=ReplyKeyboardMarkup([["الفصل الأول"], ["الفصل الثاني"]] + [nav_btns()], resize_keyboard=True))
+
+    elif ud.get('step') == 'sem' and "الفصل" in text:
+        ud.update({'step': 'mode', 'sem': text})
+        await update.message.reply_text("اختر النوع:", reply_markup=ReplyKeyboardMarkup([["نظري", "عملي"]] + [nav_btns()], resize_keyboard=True))
+
+    elif ud.get('step') == 'mode' and text in ["نظري", "عملي"]:
+        ud.update({'step': 'subject', 'mode': text})
+        data = get_data(ud['type'])
+        subjects = list(data.get(ud['year'], {}).get(ud['sem'], {}).get(text, {}).keys())
+        btns = [[s] for s in subjects] + [nav_btns()]
+        msg = "اختر المادة:" if subjects else "📂 لا يوجد مواد."
+        await update.message.reply_text(msg, reply_markup=ReplyKeyboardMarkup(btns, resize_keyboard=True))
+
+    elif ud.get('step') == 'subject' and text not in nav_btns():
+        ud.update({'step': 'list', 'subject': text})
+        data = get_data(ud['type'])
+        items = data.get(ud['year'], {}).get(ud['sem'], {}).get(ud['mode'], {}).get(text, [])
+        if not items:
+            await update.message.reply_text(f"📂 مادة {text} فارغة.", reply_markup=ReplyKeyboardMarkup([nav_btns()], resize_keyboard=True))
+        else:
+            kb = []
+            for idx, item in enumerate(items):
+                row = [InlineKeyboardButton(f"{item['name']} ({len(item['ids'])})", callback_data=f"get_{idx}")]
+                if user_id == ADMIN_ID: row.append(InlineKeyboardButton("❌", callback_data=f"ask_{idx}"))
+                kb.append(row)
+            await update.message.reply_text(f"📑 محتويات {text}:", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif text == '📊 بوابة العلامات':
+        ud['step'] = 'marks'
+        await update.message.reply_text("أرسل الرقم الجامعي:", reply_markup=ReplyKeyboardMarkup([nav_btns()], resize_keyboard=True))
+    
+    elif ud.get('step') == 'marks' and text.isdigit():
+        loading = await update.message.reply_text("⏳ جارٍ سحب النتيجة...")
+        res = get_pharmacy_marks(text)
+        await loading.edit_text(res, parse_mode='Markdown')
+
+# --- 5. أزرار Callback ---
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    ud = context.user_data
+    data_parts = query.data.split('_')
+    action, idx = data_parts[0], int(data_parts[1])
+    await query.answer()
+
+    db_data = get_data(ud.get('type'))
+    current_list = db_data[ud['year']][ud['sem']][ud['mode']][ud['subject']]
+    
+    if action == "get":
+        for f_id in current_list[idx]['ids']:
+            try:
+                if ud.get('type') == 'quiz':
+                    await context.bot.forward_message(chat_id=user_id, from_chat_id=CHANNEL_ID, message_id=f_id)
+                else:
+                    await context.bot.copy_message(chat_id=user_id, from_chat_id=CHANNEL_ID, message_id=f_id)
+            except: pass
+    elif action == "ask" and user_id == ADMIN_ID:
+        kb = [[InlineKeyboardButton("🗑 حذف الدفعة", callback_data=f"delall_{idx}")]]
+        if len(current_list[idx]['ids']) > 1:
+            for f_id in current_list[idx]['ids']:
+                kb.append([InlineKeyboardButton(f"❌ حذف ID: {f_id}", callback_data=f"onespec_{idx}_{f_id}")])
+        kb.append([InlineKeyboardButton("🔙 تراجع", callback_data="cancel_0")])
+        await query.edit_message_text("خيارات الحذف:", reply_markup=InlineKeyboardMarkup(kb))
+    elif action == "delall":
+        current_list.pop(idx)
+        save_data(ud['type'], db_data)
+        await query.edit_message_text("✅ تم الحذف.")
+    elif action == "onespec":
+        f_id_to_del = int(data_parts[2])
+        current_list[idx]['ids'] = [f for f in current_list[idx]['ids'] if f != f_id_to_del]
+        if not current_list[idx]['ids']: current_list.pop(idx)
+        save_data(ud['type'], db_data)
+        await query.edit_message_text(f"✅ تم حذف الملف {f_id_to_del}.")
+    elif action == "cancel": await query.edit_message_text("🔙 تم الإلغاء.")
+
+if __name__ == '__main__':
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=7860), daemon=True).start()
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(callback_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("Bot is Polling...")
+    application.run_polling()
