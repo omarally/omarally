@@ -9,10 +9,10 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 # --- 1. الإعدادات والاتصال ---
-ADMIN_ID = int(os.getenv("ADMINID")) 
-TOKEN = os.getenv('Token')
-MONGO_URI = f"mongodb+srv://{os.getenv('Mongourl')}"
-CHANNEL_ID = -int(os.getenv("ChannelID")) 
+ADMIN_ID = 7448026977 
+TOKEN = '8611720054:AAHeW3Oe-QKhufUkZjLVqOVMALQ5PKvEZ8M'
+MONGO_URI = "mongodb+srv://OMARGX_db_user:jor3%40asdf@cluster0.nyrvkse.mongodb.net/?appName=Cluster0"
+CHANNEL_ID = -1003767458424 
 
 client = MongoClient(MONGO_URI)
 db = client['AcademyBotDB']
