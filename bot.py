@@ -24,13 +24,13 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 ADMIN_ID = int(os.getenv("ADMINID"))
 
-TOKEN = os.getenv('TOKEN')
+TOKEN = os.getenv('Token')
 
-MONGO_URI = f"mongodb+srv://{os.getenv('MONGOURL')}"
+MONGO_URI = f"mongodb+srv:/[os.getenv("Mongourl")]"
 
-CHANNEL_ID = -int(os.getenv("CHANNELID"))
+CHANNEL_ID = -int(os.getenv("ChannelID"))
 
-GEMINI_API_KEY = os.getenv("GEMINITOKEN")
+GEMINI_API_KEY = "AQ.Ab8RN6IfjQEVn5s8Oq3zvvstogwaVLu-rK4aYPSRbNuIN33jYA"
 
 # نماذج Gemini (الأسرع أولاً)
 
