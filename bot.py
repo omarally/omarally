@@ -26,11 +26,11 @@ ADMIN_ID = int(os.getenv("ADMINID"))
 
 TOKEN = os.getenv('TOKEN')
 
-MONGO_URI = f"mongodb+srv:/[os.getenv("MONGOURL")]"
+MONGO_URI = f"mongodb+srv:/{os.getenv('MONGOURL')}"
 
 CHANNEL_ID = -int(os.getenv("CHANNELID"))
 
-GEMINI_API_KEY = "GEMINITOKEN"
+GEMINI_API_KEY = os.getenv("GEMINITOKEN")
 
 # نماذج Gemini (الأسرع أولاً)
 
