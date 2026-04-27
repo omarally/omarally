@@ -1,7 +1,7 @@
-python-telegram-bot
+python-telegram-Bot
+Beautifulsoup4
+requests
+urllib3
 pymongo
 dnspython
-requests
-beautifulsoup4
-flask
-urllib3
+google.genai
